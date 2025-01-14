@@ -1,10 +1,4 @@
-#修改了returns也即v_target的定义，由此修改了compute_returns_advantages函数
-"""网络类型的选择主要取决于状态空间设计，如果状态信息是向量式的，即一组拉成一维的标量，比如位置、角度、速度等，那就适合采用全连接（MLP）网络；如果状态信息是 imagelike
-的，比如图像，或者其他以二维形式重组的信息，就适合采用卷积神经网络（CNN）。实际应用中往往同时包含这两种状态信息，因此网络类型也可以既有 CNN 也有 MLP，处理完各自对应的输入信息后，在高层通过 concat
-操作汇集在一起，再通过若干层全连接，最后输出 action 或 Q/V 值。 对于 on-policy 算法，episode 形式的数据天然适合采用 RNN
-来挖掘更多时序信息，但同时也会显著提高训练难度，用与不用取决于决策对时序相关性的依赖程度。换句话说，如果之前的经验对当前决策很有参考意义（比如 Dota）就适合用 RNN，反之仅依靠即时信息做应激式决策就足以应付就没必要用
-RNN。实践中经常采取折中方案，将最近几个 step 的原始状态信息叠加到一起作为当前时刻的实际状态信息输入 policy，既可以挖掘一定范围内的时序信息，又避免增加训练难度。
-https://download.csdn.net/blog/column/11224423/131730507"""
+
 from mujoco_py import MujocoException
 
 import time
@@ -21,24 +15,22 @@ from memory import Memory
 from torch.utils.data.sampler import BatchSampler, SubsetRandomSampler, SequentialSampler
 
 
-#import roboschool
-
 #torch.cuda.is_available = lambda: False
 
 class RewardScaling:
     def __init__(self, shape, gamma):
-        self.shape = shape  # reward shape=1
-        self.gamma = gamma  # discount factor
+        self.shape = shape
+        self.gamma = gamma
         self.running_ms = RunningMeanStd(shape=self.shape)
         self.R = np.zeros(self.shape)
 
     def __call__(self, x):
         self.R = self.gamma * self.R + x
         self.running_ms.update(self.R)
-        x = x / (self.running_ms.std + 1e-8)  # Only divided std
+        x = x / (self.running_ms.std + 1e-8)
         return x
 
-    def reset(self):  # When an episode is done,we should reset 'self.R'
+    def reset(self):
         self.R = np.zeros(self.shape)
 
 
@@ -68,7 +60,6 @@ class Normalization:
         self.running_ms = RunningMeanStd(shape=shape)
 
     def __call__(self, x, update=True):
-        # Whether to update the mean and std,during the evaluating,update=Flase
         if update:
             self.running_ms.update(x)
         x = (x - self.running_ms.mean) / (self.running_ms.std + 1e-8)
@@ -319,7 +310,6 @@ class PPO:
                     surr2 = torch.clamp(ratios, 1 - self.eps_clip, 1 + self.eps_clip) * advantages_batch  # 裁剪
                     loss = -torch.min(surr1, surr2).mean() + 0.5 * critic_loss - 0.01 * entropy
 
-                # TODO:未知图探索：PPO的loss要对齐policy loss和value loss使二者数量级近似；那么这是否可以作为本作业的其中一个自适应优化点？
                 #loss*=scale_factor
                 #critic_loss*=scale_factor
 
@@ -446,7 +436,7 @@ class PPO:
                 self.update(memory_data)
                 self.actor.to("cpu")  # CPU采样；不用管self.critic，它只有在update才有用
                 last_update_timestep = timestep  # 更新最后一次更新的时间戳
-                self.memory.clear() # TODO: 之后改造为经验回放池，就不clear了
+                self.memory.clear()
                 self.learning_rate_decay(timestep, max_timesteps)
 
             if timestep % 2000000 == 0:
@@ -464,15 +454,13 @@ class PPO:
                 debug_episode_reward = 0
                 debug_episode_counter += 1
                 episode_steps = 0
-                timesteps_list.append(timestep)  # 《========================================
+                timesteps_list.append(timestep)
 
         # 平滑 reward（使用滑动平均）
         smoothed_rewards = self.smooth_rewards(episode_rewards, smooth_window)
 
         # 绘制折线图
-        #self.plot_rewards(episode_rewards, smoothed_rewards)
-        self.plot_rewards(timesteps_list, episode_rewards, smoothed_rewards,
-                          smooth_window)  # 《========================================
+        self.plot_rewards(timesteps_list, episode_rewards, smoothed_rewards, smooth_window)
         print("Training complete!")
         self.save_model(timestep)  # 训练完成后保存模型
 
@@ -528,11 +516,9 @@ class PPO:
         print(f"Model loaded from {model_filename}")
 
     def smooth_rewards(self, rewards, window_size):
-        """平滑 reward，通过滑动平均"""
         return np.convolve(rewards, np.ones(window_size) / window_size, mode='valid')
 
-    def plot_rewards(self, timesteps_list, raw_rewards, smoothed_rewards, window_size):#《========================================
-        #plt.gca().yaxis.set_major_formatter(ticker.StrMethodFormatter('{x:,.0f}'))
+    def plot_rewards(self, timesteps_list, raw_rewards, smoothed_rewards, window_size):
         start_index = window_size - 1
         plt.figure(figsize=(10, 5))
         plt.plot(timesteps_list, raw_rewards, label="Episode Rewards", alpha=0.3)
@@ -567,7 +553,7 @@ def load_train(env_name, train_steps=1000000, discrete=False, test_mark=False, w
         action_high = None
     #ppo = PPO(env, state_dim, action_dim, action_low, action_high, device="cpu", discrete=discrete)
     ppo = PPO(env, state_dim, action_dim, action_low, action_high, device="cuda", discrete=discrete, window_size=window_size, use_clip=use_clip)
-    #隐藏层64太逆天了不如cpu；隐藏层512时CPU==CPU采样+CUDA训练；隐藏层1024时CPU采样+CUDA训练性能优势明显
+    #隐藏层64不如cpu；隐藏层512时CPU==CPU采样+CUDA训练；隐藏层1024时CPU采样+CUDA训练性能优势明显
     if test_mark:
         ppo.load_model(env.spec.id + "_ppo_model_"+str(train_steps)+".pth")
     else:
